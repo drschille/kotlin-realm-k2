@@ -295,7 +295,7 @@ private fun gatherTargetInfo(kotlinCompilation: KotlinCompilation<*>): TargetInf
         }
 
         is KotlinJvmCompilation -> {
-            val jvmTarget = kotlinCompilation.kotlinOptions.jvmTarget
+            val jvmTarget = "unknown"
             TargetInfo("JVM", "Universal", jvmTarget, jvmTarget)
         }
 
