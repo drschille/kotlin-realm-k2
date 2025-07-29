@@ -69,6 +69,7 @@ import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithName
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrMutableAnnotationContainer
+import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
@@ -424,7 +425,7 @@ data class SchemaProperty(
     companion object {
         fun getPersistedName(declaration: IrProperty): String {
             @Suppress("UNCHECKED_CAST")
-            return (declaration.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConstImpl).value as String
+            return (declaration.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).arguments[0]!! as IrConstImpl).value as String
         }
     }
 }
@@ -449,16 +450,13 @@ internal fun <T : IrExpression> buildOf(
         origin = null,
         superQualifierSymbol = null
     ).apply {
-        putTypeArgument(index = 0, type = elementType)
-        putValueArgument(
-            index = 0,
-            valueArgument = IrVarargImpl(
-                UNDEFINED_OFFSET,
-                UNDEFINED_OFFSET,
-                context.irBuiltIns.arrayClass.typeWith(elementType),
-                type,
-                args.toList()
-            )
+        typeArguments[0] = elementType
+        arguments[0] = IrVarargImpl(
+            UNDEFINED_OFFSET,
+            UNDEFINED_OFFSET,
+            context.irBuiltIns.arrayClass.typeWith(elementType),
+            type,
+            args.toList()
         )
     }
 }
@@ -472,7 +470,7 @@ internal fun <T : IrExpression> buildSetOf(
 ): IrExpression {
     val setOf = context.referenceFunctions(CallableId(FqName("kotlin.collections"), Name.identifier("setOf")))
         .first {
-            val parameters = it.owner.valueParameters
+            val parameters = it.owner.parameters
             parameters.size == 1 && parameters.first().isVararg
         }
     val setIrClass: IrClass = context.lookupClassOrThrow(ClassIds.KOTLIN_COLLECTIONS_SET)
@@ -488,7 +486,7 @@ internal fun <T : IrExpression> buildListOf(
 ): IrExpression {
     val listOf = context.referenceFunctions(KOTLIN_COLLECTIONS_LISTOF)
         .first {
-            val parameters = it.owner.valueParameters
+            val parameters = it.owner.parameters
             parameters.size == 1 && parameters.first().isVararg
         }
     val listIrClass: IrClass = context.lookupClassOrThrow(ClassIds.KOTLIN_COLLECTIONS_LIST)
@@ -530,7 +528,8 @@ fun IrClass.addValueProperty(
         returnType = propertyType
     }
     // $this: VALUE_PARAMETER name:<this> type:dev.nhachicha.Foo.$RealmHandler
-    getter.dispatchReceiverParameter = thisReceiver!!.copyTo(getter)
+    getter.parameters = listOf(thisReceiver!!.copyTo(getter)) +
+            getter.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
     // overridden:
     //   public abstract fun <get-realmPointer> (): kotlin.Long? declared in dev.nhachicha.RealmObjectInternal
     val propertyAccessorGetter = superClass.getPropertyGetter(propertyName.asString())
@@ -568,12 +567,12 @@ internal fun IrClass.addFakeOverrides(
             origin = IrDeclarationOrigin.FAKE_OVERRIDE
             isFakeOverride = true
         }.apply {
-            override.valueParameters.forEach { x ->
+            override.parameters.forEach { x ->
                 addValueParameter(x.name, x.type)
             }
             this.overriddenSymbols = listOf(override.symbol)
-            dispatchReceiverParameter =
-                receiver.owner.thisReceiver!!.copyTo(this)
+            parameters = listOf(receiver.owner.thisReceiver!!.copyTo(this)) +
+                    parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         }
     }
 }
@@ -597,11 +596,8 @@ fun IrBlockBuilder.createSafeCallConstruction(
                 typeArgumentsCount = 0,
                 origin = IrStatementOrigin.EQEQ
             ).apply {
-                putValueArgument(0, IrGetValueImpl(startOffset, endOffset, receiverVariableSymbol))
-                putValueArgument(
-                    1,
-                    IrConstImpl.constNull(startOffset, endOffset, context.irBuiltIns.nothingNType)
-                )
+                arguments[0] = IrGetValueImpl(startOffset, endOffset, receiverVariableSymbol)
+                arguments[1] = IrConstImpl.constNull(startOffset, endOffset, context.irBuiltIns.nothingNType)
             }
             branches += IrBranchImpl(
                 condition,
@@ -638,7 +634,7 @@ fun getCollectionElementType(backingFieldType: IrType): IrType? {
 
 fun getBacklinksTargetType(backingField: IrField): IrType {
     (backingField.initializer!!.expression as IrCall).let { irCall ->
-        val propertyReference = irCall.getValueArgument(0) as IrPropertyReference
+        val propertyReference = irCall.arguments[0] as IrPropertyReference
         val propertyType = (propertyReference.type as IrAbstractSimpleType)
         return propertyType.arguments[0] as IrType
     }
@@ -648,7 +644,7 @@ fun getBacklinksTargetPropertyType(declaration: IrProperty): IrType? {
     val backingField: IrField = declaration.backingField!!
 
     (backingField.initializer!!.expression as IrCall).let { irCall ->
-        val targetPropertyParameter = irCall.getValueArgument(0)
+        val targetPropertyParameter = irCall.arguments[0]
 
         // Limit linkingObjects to accept only initialization parameters
         if (targetPropertyParameter is IrPropertyReference) {
@@ -666,7 +662,7 @@ fun getBacklinksTargetPropertyType(declaration: IrProperty): IrType? {
 
 fun getLinkingObjectPropertyName(backingField: IrField): String {
     (backingField.initializer!!.expression as IrCall).let { irCall ->
-        val propertyReference = irCall.getValueArgument(0) as IrPropertyReference
+        val propertyReference = irCall.arguments[0] as IrPropertyReference
         val targetProperty: IrProperty = propertyReference.symbol.owner
         return if (targetProperty.hasAnnotation(PERSISTED_NAME_ANNOTATION)) {
             SchemaProperty.getPersistedName(targetProperty)
@@ -682,7 +678,7 @@ fun getLinkingObjectPropertyName(backingField: IrField): String {
 fun getSchemaClassName(clazz: IrClass): String {
     return if (clazz.hasAnnotation(PERSISTED_NAME_ANNOTATION)) {
         @Suppress("UNCHECKED_CAST")
-        return (clazz.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).getValueArgument(0)!! as IrConstImpl).value as String
+        return (clazz.getAnnotation(PERSISTED_NAME_ANNOTATION.asSingleFqName()).arguments[0]!! as IrConstImpl).value as String
     } else {
         clazz.name.identifier
     }
