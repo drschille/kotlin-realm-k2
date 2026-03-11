@@ -36,11 +36,8 @@ import org.jetbrains.kotlin.ir.expressions.impl.fromSymbolOwner
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
 import org.jetbrains.kotlin.ir.symbols.IrConstructorSymbol
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
-import org.jetbrains.kotlin.ir.types.defaultType
 import org.jetbrains.kotlin.ir.types.starProjectedType
-import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.util.companionObject
-import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.util.isAnonymousObject
 import org.jetbrains.kotlin.ir.util.isEnumClass
 import org.jetbrains.kotlin.ir.util.isObject
@@ -121,7 +118,8 @@ private class RealmModelLowering(private val pluginContext: IrPluginContext) : C
             // able to resolve the companion object during runtime due to absence of
             // kotlin.reflect.full.companionObjectInstance
             if (pluginContext.platform.isNative()) {
-                val type = modelObjectAnnotationClass.defaultType as? IrType ?: throw IllegalStateException("defaultType is not an IrType")
+                val type = modelObjectAnnotationClass.thisReceiver?.type
+                    ?: throw IllegalStateException("Annotation class receiver type is missing")
                 val primaryConstructor = modelObjectAnnotationClass.primaryConstructor ?: throw IllegalStateException("primaryConstructor is null")
                 val constructorSymbol = primaryConstructor.symbol as? IrConstructorSymbol ?: throw IllegalStateException("symbol is not an IrConstructorSymbol")
                 val modelObjectAnnotation = IrConstructorCallImpl.fromSymbolOwner(
@@ -142,7 +140,8 @@ private class RealmModelLowering(private val pluginContext: IrPluginContext) : C
             // add super type RealmObjectInternal and RealmObjectInterop
             val realmObjectInternalInterface: IrClassSymbol =
                 pluginContext.lookupClassOrThrow(REALM_OBJECT_INTERNAL_INTERFACE).symbol
-            irClass.superTypes += realmObjectInternalInterface.defaultType
+            irClass.superTypes += realmObjectInternalInterface.owner.thisReceiver?.type
+                ?: throw IllegalStateException("RealmObjectInternal receiver type is missing")
 
             // Generate RealmObjectInternal properties overrides
             val generator = RealmModelSyntheticPropertiesGeneration(pluginContext)
@@ -164,7 +163,8 @@ private class RealmModelLowering(private val pluginContext: IrPluginContext) : C
             if (irClass.isCompanion && irClass.parentAsClass.isBaseRealmObject) {
                 val realmModelCompanion: IrClassSymbol =
                     pluginContext.lookupClassOrThrow(REALM_MODEL_COMPANION).symbol
-                irClass.superTypes += realmModelCompanion.defaultType
+                irClass.superTypes += realmModelCompanion.owner.thisReceiver?.type
+                    ?: throw IllegalStateException("RealmModelCompanion receiver type is missing")
             }
         }
     }
