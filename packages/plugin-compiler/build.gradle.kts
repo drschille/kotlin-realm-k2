@@ -39,10 +39,10 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:${Versions.kotlin}")
     testImplementation("org.jetbrains.kotlin:kotlin-reflect:${Versions.kotlin}")
     testImplementation("dev.zacsweers.kctfork:core:${Versions.kotlinCompileTesting}")
-    // Have to be mentioned explicitly as it is not an api dependency of library
-    implementation(project(":cinterop"))
-    testImplementation(project(":library-base"))
-    testImplementation(project(":library-sync"))
+    // Avoid pulling native/cinterop subprojects in patch builds; use published runtime artifacts.
+    implementation("io.realm.kotlin:cinterop:3.0.0")
+    testImplementation("io.realm.kotlin:library-base:3.0.0")
+    testImplementation("io.realm.kotlin:library-sync:3.0.0")
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {

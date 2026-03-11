@@ -14,7 +14,10 @@
  * limitations under the License.
  */
 
-@file:OptIn(UnsafeDuringIrConstructionAPI::class)
+@file:OptIn(
+    UnsafeDuringIrConstructionAPI::class,
+    org.jetbrains.kotlin.DeprecatedForRemovalCompilerApi::class,
+)
 
 package io.realm.kotlin.compiler
 
@@ -78,6 +81,7 @@ import org.jetbrains.kotlin.ir.builders.irSetField
 import org.jetbrains.kotlin.ir.builders.irString
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrEnumEntry
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
@@ -108,7 +112,7 @@ import org.jetbrains.kotlin.ir.types.typeOrNull
 import org.jetbrains.kotlin.ir.types.typeWith
 import org.jetbrains.kotlin.ir.util.companionObject
 import org.jetbrains.kotlin.ir.util.constructors
-import org.jetbrains.kotlin.ir.util.copyTo
+import org.jetbrains.kotlin.ir.util.createDispatchReceiverParameterWithClassParent
 import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.util.functions
 import org.jetbrains.kotlin.ir.util.getPropertyGetter
@@ -329,9 +333,10 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
                             startOffset = startOffset,
                             endOffset = endOffset,
                             type = pluginContext.irBuiltIns.kClassClass.typeWith(propertyElementType),
-                            symbol = propertyElementType.classOrNull!!,
-                            classType = propertyElementType.classOrNull!!.defaultType,
-                        )
+                                    symbol = propertyElementType.classOrNull!!,
+                                    classType = (propertyElementType.classOrNull!!.owner.thisReceiver?.type
+                                        ?: error("Missing receiver type for ${propertyElementType.classOrNull}")),
+                                )
                         val objectPropertyType = if (it.value.isComputed) realmObjectPropertyType else
                             realmObjectMutablePropertyType
                         val elementType = pairClass.typeWith(pluginContext.irBuiltIns.kClassClass.typeWith(), objectPropertyType)
@@ -473,8 +478,6 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
 
         val function =
             companionObject.functions.first { it.name == REALM_OBJECT_COMPANION_SCHEMA_METHOD }
-        function.parameters = listOfNotNull(companionObject.thisReceiver?.copyTo(function)) +
-                function.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         function.body = pluginContext.blockBody(function.symbol) {
             +irReturn(
                 IrConstructorCallImpl.fromSymbolOwner(
@@ -491,21 +494,23 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
                             typeArgumentsCount = 0,
                         ).apply {
                             dispatchReceiver = irGetObject(classInfoClass.companionObject()!!.symbol)
-                            var arg = 0
                             // Name
-                            arguments[arg++] = irString(className)
+                            putValueArgument(0, irString(className))
                             // Primary key
-                            arguments[arg++] = if (primaryKey != null) irString(primaryKey) else {
+                            putValueArgument(1, if (primaryKey != null) irString(primaryKey) else {
                                 IrConstImpl.constNull(
                                     startOffset,
                                     endOffset,
                                     pluginContext.irBuiltIns.nothingNType
                                 )
-                            }
+                            })
                             // num properties
-                            arguments[arg++] = irLong(fields.size.toLong())
-                            arguments[arg++] = irBoolean(embedded)
-                            arguments[arg++] = irBoolean(asymmetric)
+                            putValueArgument(2, irLong(fields.size.toLong()))
+                            putValueArgument(3, irBoolean(embedded))
+                            // Keep compatibility with runtimes that don't expose the asymmetric flag.
+                            if (classInfoCreateMethod.valueParameters.size > 4) {
+                                putValueArgument(4, irBoolean(asymmetric))
+                            }
                         }
                     arguments[1] = buildListOf(
                             pluginContext, startOffset, endOffset, propertyClass.defaultType,
@@ -750,8 +755,6 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
 
         val function =
             companionObject.functions.first { it.name == REALM_OBJECT_COMPANION_NEW_INSTANCE_METHOD }
-        function.parameters = listOfNotNull(companionObject.thisReceiver?.copyTo(function)) +
-                function.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         function.body = pluginContext.blockBody(function.symbol) {
             val firstZeroArgCtor: Any = irClass.constructors.filter { it.parameters.isEmpty() }.firstOrNull()
                 ?: logError("Cannot find primary zero arg constructor", irClass.locationOf())
@@ -770,7 +773,7 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
             listOf(realmObjectCompanionInterface.functions.first { it.name == REALM_OBJECT_COMPANION_NEW_INSTANCE_METHOD }.symbol)
     }
 
-    @Suppress("LongMethod")
+    @Suppress("LongMethod", "DEPRECATION", "DEPRECATION_ERROR")
     private fun IrClass.addInternalVarProperty(
         owner: IrClass,
         propertyName: Name,
@@ -809,9 +812,14 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
             modality = Modality.OPEN
             returnType = propertyType
         }
+        if (getter.dispatchReceiverParameter == null) {
+            @Suppress("DEPRECATION_ERROR")
+            run {
+                getter.dispatchReceiverParameter =
+                    getter.createDispatchReceiverParameterWithClassParent(IrDeclarationOrigin.DEFINED)
+            }
+        }
         // $this: VALUE_PARAMETER name:<this> type:dev.nhachicha.Foo.$RealmHandler
-        getter.parameters = listOf(thisReceiver!!.copyTo(getter)) +
-                getter.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         // overridden:
         //   public abstract fun <get-realmPointer> (): kotlin.Long? declared in dev.nhachicha.RealmObjectInternal
         val propertyAccessorGetter = owner.getPropertyGetter(propertyName.asString())
@@ -824,9 +832,11 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
         // receiver: GET_VAR '<this>: dev.nhachicha.Foo.$RealmHandler declared in dev.nhachicha.Foo.$RealmHandler.<get-objectPointer>' type=dev.nhachicha.Foo.$RealmHandler origin=null
         getter.body = pluginContext.blockBody(getter.symbol) {
             at(startOffset, endOffset)
+            val dispatchReceiver = getter.dispatchReceiverParameter
+                ?: fatalError("Missing getter dispatch receiver for ${propertyName.asString()}")
             +irReturn(
                 irGetField(
-                    irGet(getter.dispatchReceiverParameter!!),
+                    irGet(dispatchReceiver),
                     property.backingField!!,
                     property.backingField!!.type
                 )
@@ -841,9 +851,14 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
             modality = Modality.OPEN
             returnType = pluginContext.irBuiltIns.unitType
         }
+        if (setter.dispatchReceiverParameter == null) {
+            @Suppress("DEPRECATION_ERROR")
+            run {
+                setter.dispatchReceiverParameter =
+                    setter.createDispatchReceiverParameterWithClassParent(IrDeclarationOrigin.DEFINED)
+            }
+        }
         // $this: VALUE_PARAMETER name:<this> type:dev.nhachicha.Child
-        setter.parameters = listOf(thisReceiver!!.copyTo(setter)) +
-                setter.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         setter.correspondingPropertySymbol = property.symbol
 
         // overridden:
@@ -863,8 +878,10 @@ class RealmModelSyntheticPropertiesGeneration(private val pluginContext: IrPlugi
         }
         setter.body = DeclarationIrBuilder(pluginContext, setter.symbol).irBlockBody {
             at(startOffset, endOffset)
+            val dispatchReceiver = setter.dispatchReceiverParameter
+                ?: fatalError("Missing setter dispatch receiver for ${propertyName.asString()}")
             +irSetField(
-                irGet(setter.dispatchReceiverParameter!!),
+                irGet(dispatchReceiver),
                 property.backingField!!.symbol.owner,
                 irGet(valueParameter),
             )

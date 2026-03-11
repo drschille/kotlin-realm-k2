@@ -40,10 +40,6 @@ fun getPropertyValue(propertyName: String): String? {
         include(":gradle-plugin")
         include(":plugin-compiler")
         include(":plugin-compiler-shaded")
-        include(":library-base")
-        include(":library-sync")
-        include(":cinterop")
-        include(":jni-swig-stub")
     }
 }
 (getPropertyValue("includeTestModules")?.let { it.toBoolean() } ?: true).let {

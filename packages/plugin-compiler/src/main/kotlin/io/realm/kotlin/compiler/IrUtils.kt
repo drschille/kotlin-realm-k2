@@ -75,9 +75,11 @@ import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrVariable
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrComposite
 import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.impl.IrBlockImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrBranchImpl
 import org.jetbrains.kotlin.ir.expressions.impl.IrCallImpl
@@ -102,7 +104,6 @@ import org.jetbrains.kotlin.ir.types.makeNullable
 import org.jetbrains.kotlin.ir.types.typeWith
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.util.companionObject
-import org.jetbrains.kotlin.ir.util.copyTo
 import org.jetbrains.kotlin.ir.util.file
 import org.jetbrains.kotlin.ir.util.functions
 import org.jetbrains.kotlin.ir.util.getPropertyGetter
@@ -528,8 +529,8 @@ fun IrClass.addValueProperty(
         returnType = propertyType
     }
     // $this: VALUE_PARAMETER name:<this> type:dev.nhachicha.Foo.$RealmHandler
-    getter.parameters = listOf(thisReceiver!!.copyTo(getter)) +
-            getter.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
+    getter.parameters = listOf(thisReceiver!!) +
+        getter.parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
     // overridden:
     //   public abstract fun <get-realmPointer> (): kotlin.Long? declared in dev.nhachicha.RealmObjectInternal
     val propertyAccessorGetter = superClass.getPropertyGetter(propertyName.asString())
@@ -571,8 +572,6 @@ internal fun IrClass.addFakeOverrides(
                 addValueParameter(x.name, x.type)
             }
             this.overriddenSymbols = listOf(override.symbol)
-            parameters = listOf(receiver.owner.thisReceiver!!.copyTo(this)) +
-                    parameters.filterNot { it.kind == IrParameterKind.DispatchReceiver }
         }
     }
 }
@@ -634,7 +633,8 @@ fun getCollectionElementType(backingFieldType: IrType): IrType? {
 
 fun getBacklinksTargetType(backingField: IrField): IrType {
     (backingField.initializer!!.expression as IrCall).let { irCall ->
-        val propertyReference = irCall.arguments[0] as IrPropertyReference
+        val propertyReference = resolvePropertyReference(irCall.arguments[0])
+            ?: error("Could not resolve backlinks target property reference.")
         val propertyType = (propertyReference.type as IrAbstractSimpleType)
         return propertyType.arguments[0] as IrType
     }
@@ -647,14 +647,11 @@ fun getBacklinksTargetPropertyType(declaration: IrProperty): IrType? {
         val targetPropertyParameter = irCall.arguments[0]
 
         // Limit linkingObjects to accept only initialization parameters
-        if (targetPropertyParameter is IrPropertyReference) {
-            val propertyType = (targetPropertyParameter.type as IrAbstractSimpleType)
+        val targetPropertyReference = resolvePropertyReference(targetPropertyParameter)
+        if (targetPropertyReference != null) {
+            val propertyType = (targetPropertyReference.type as IrAbstractSimpleType)
             return propertyType.arguments[1] as IrType
         } else {
-            logError(
-                "Error in backlinks field ${declaration.name} - only direct property references are valid parameters.",
-                backingField.locationOf()
-            )
             return null
         }
     }
@@ -662,13 +659,28 @@ fun getBacklinksTargetPropertyType(declaration: IrProperty): IrType? {
 
 fun getLinkingObjectPropertyName(backingField: IrField): String {
     (backingField.initializer!!.expression as IrCall).let { irCall ->
-        val propertyReference = irCall.arguments[0] as IrPropertyReference
+        val propertyReference = resolvePropertyReference(irCall.arguments[0])
+            ?: error("Could not resolve backlinks property reference.")
         val targetProperty: IrProperty = propertyReference.symbol.owner
         return if (targetProperty.hasAnnotation(PERSISTED_NAME_ANNOTATION)) {
             SchemaProperty.getPersistedName(targetProperty)
         } else {
             targetProperty.name.identifier
         }
+    }
+}
+
+private fun resolvePropertyReference(expression: IrExpression?): IrPropertyReference? {
+    return when (expression) {
+        is IrPropertyReference -> expression
+        is IrTypeOperatorCall -> resolvePropertyReference(expression.argument)
+        is IrComposite -> expression.statements.asReversed().firstNotNullOfOrNull { statement ->
+            (statement as? IrExpression)?.let { nested -> resolvePropertyReference(nested) }
+        }
+        is IrCall -> {
+            expression.arguments.firstNotNullOfOrNull { arg -> resolvePropertyReference(arg) }
+        }
+        else -> null
     }
 }
 

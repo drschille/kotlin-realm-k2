@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.ir.builders.irGet
 import org.jetbrains.kotlin.ir.builders.irGetObject
 import org.jetbrains.kotlin.ir.builders.irReturn
 import org.jetbrains.kotlin.ir.declarations.IrClass
+import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.expressions.impl.IrCallImpl
@@ -77,9 +78,18 @@ class RealmModelDefaultMethodGeneration(private val pluginContext: IrPluginConte
                     symbol = realmEquals.symbol,
                     typeArgumentsCount = 0,
                 ).apply {
-                    dispatchReceiver = irGetObject(realmObjectHelper.symbol)
-                    arguments[0] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
-                    arguments[1] = irGet(function.parameters[0].type, function.parameters[0].symbol)
+                    val receiverInArguments = symbol.owner.parameters.firstOrNull()?.kind in setOf(
+                        IrParameterKind.DispatchReceiver,
+                        IrParameterKind.ExtensionReceiver
+                    )
+                    val startIndex = if (receiverInArguments) {
+                        arguments[0] = irGetObject(realmObjectHelper.symbol)
+                        1
+                    } else {
+                        0
+                    }
+                    arguments[startIndex] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
+                    arguments[startIndex + 1] = irGet(function.parameters[0].type, function.parameters[0].symbol)
                 }
             )
         }
@@ -96,8 +106,17 @@ class RealmModelDefaultMethodGeneration(private val pluginContext: IrPluginConte
                     symbol = realmHashCode.symbol,
                     typeArgumentsCount = 0,
                 ).apply {
-                    dispatchReceiver = irGetObject(realmObjectHelper.symbol)
-                    arguments[0] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
+                    val receiverInArguments = symbol.owner.parameters.firstOrNull()?.kind in setOf(
+                        IrParameterKind.DispatchReceiver,
+                        IrParameterKind.ExtensionReceiver
+                    )
+                    val startIndex = if (receiverInArguments) {
+                        arguments[0] = irGetObject(realmObjectHelper.symbol)
+                        1
+                    } else {
+                        0
+                    }
+                    arguments[startIndex] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
                 }
             )
         }
@@ -114,8 +133,17 @@ class RealmModelDefaultMethodGeneration(private val pluginContext: IrPluginConte
                     symbol = realmToString.symbol,
                     typeArgumentsCount = 0,
                 ).apply {
-                    dispatchReceiver = irGetObject(realmObjectHelper.symbol)
-                    arguments[0] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
+                    val receiverInArguments = symbol.owner.parameters.firstOrNull()?.kind in setOf(
+                        IrParameterKind.DispatchReceiver,
+                        IrParameterKind.ExtensionReceiver
+                    )
+                    val startIndex = if (receiverInArguments) {
+                        arguments[0] = irGetObject(realmObjectHelper.symbol)
+                        1
+                    } else {
+                        0
+                    }
+                    arguments[startIndex] = irGet(function.dispatchReceiverParameter!!.type, function.dispatchReceiverParameter!!.symbol)
                 }
             )
         }

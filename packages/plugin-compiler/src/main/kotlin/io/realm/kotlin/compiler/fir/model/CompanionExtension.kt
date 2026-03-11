@@ -20,7 +20,6 @@ import io.realm.kotlin.compiler.Names
 import io.realm.kotlin.compiler.fir.RealmPluginGeneratorKey
 import io.realm.kotlin.compiler.isBaseRealmObject
 import org.jetbrains.kotlin.fir.FirSession
-import org.jetbrains.kotlin.fir.analysis.checkers.getContainingClassSymbol
 import org.jetbrains.kotlin.fir.declarations.utils.isCompanion
 import org.jetbrains.kotlin.fir.extensions.FirDeclarationGenerationExtension
 import org.jetbrains.kotlin.fir.extensions.MemberGenerationContext
@@ -28,6 +27,7 @@ import org.jetbrains.kotlin.fir.extensions.NestedClassGenerationContext
 import org.jetbrains.kotlin.fir.plugin.createCompanionObject
 import org.jetbrains.kotlin.fir.plugin.createDefaultPrivateConstructor
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
+import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
 import org.jetbrains.kotlin.fir.symbols.SymbolInternals
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassLikeSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirClassSymbol
@@ -68,7 +68,10 @@ class CompanionExtension(session: FirSession) : FirDeclarationGenerationExtensio
         classSymbol: FirClassSymbol<*>,
         context: MemberGenerationContext
     ): Set<Name> {
-        if (classSymbol.isCompanion && (classSymbol.getContainingClassSymbol() as? FirClassSymbol<*>)?.isBaseRealmObject == true) {
+        val containerSymbol = classSymbol.classId.outerClassId?.let { outerClassId ->
+            session.symbolProvider.getClassLikeSymbolByClassId(outerClassId) as? FirClassSymbol<*>
+        }
+        if (classSymbol.isCompanion && containerSymbol?.isBaseRealmObject == true) {
             return setOf(
                 Names.REALM_OBJECT_COMPANION_SCHEMA_METHOD,
                 Names.REALM_OBJECT_COMPANION_NEW_INSTANCE_METHOD,
